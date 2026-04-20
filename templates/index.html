@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ambigo | AI Paragraph Ambiguity Analyzer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>Ambigo</h1>
+            <p>Reveal the hidden meanings in your text with AI-powered disambiguation.</p>
+        </header>
+
+        <!-- Accuracy Dashboard -->
+        <div class="accuracy-dashboard" id="accuracyDashboard">
+            <div class="accuracy-header">
+                <span class="accuracy-label">Model Accuracy</span>
+                <span class="accuracy-value" id="accuracyPercent">— %</span>
+            </div>
+            <div class="accuracy-bar-track">
+                <div class="accuracy-bar-fill" id="accuracyBarFill"></div>
+            </div>
+            <div class="accuracy-stats">
+                <span id="correctCount">✅ 0 Correct</span>
+                <span id="totalCount">🔢 0 Total</span>
+                <button id="resetBtn" onclick="resetAccuracy()" class="reset-btn" title="Reset accuracy stats">↺
+                    Reset</button>
+            </div>
+        </div>
+
+        <main>
+            <div class="input-section">
+                <textarea id="text"
+                    placeholder="Enter a paragraph to analyze... (e.g., 'I went to the bank to deposit money. She saw a bat flying at night.')"></textarea>
+                <div class="actions">
+                    <button id="analyzeBtn" onclick="analyze()">Deep Analyze</button>
+                </div>
+            </div>
+
+            <div id="loader" class="loader">
+                <div class="dot"></div>
+                <div class="dot"></div>
+                <div class="dot"></div>
+            </div>
+
+            <div id="output">
+                <!-- Results will be injected here -->
+            </div>
+        </main>
+    </div>
+
+    <script>
+        let lastAnalyzed = false;
+
+        async function analyze() {
+            const text = document.getElementById("text").value.trim();
+            const output = document.getElementById("output");
+            const loader = document.getElementById("loader");
+            const analyzeBtn = document.getElementById("analyzeBtn");
+
+            if (!text) return;
+
+            // Reset UI
+            output.style.display = 'none';
+            loader.style.display = 'flex';
+            analyzeBtn.disabled = true;
+            analyzeBtn.innerText = 'Analyzing...';
+            lastAnalyzed = true;
+
+            try {
+                const response = await fetch("/analyze", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ text: text })
+                });
+
+                const data = await response.json();
+
+                // Update accuracy dashboard
+                updateAccuracyUI(data.accuracy, data.correct, data.total);
+
+                // Build result HTML
+                let html = '';
+
+                // Summary banner
+                html += `<div class="summary-banner">
+                    <span class="summary-icon">🔍</span>
+                    <span>${data.summary}</span>
+                </div>`;
+
+                const analyses = data.sentence_analyses || [];
+                const hasAnyAmbiguity = analyses.some(s => s.has_ambiguity);
+
+                if (hasAnyAmbiguity) {
+                    html += '<div class="sentence-meanings-list">';
+
+                    analyses.forEach((item, index) => {
+                        const ambigWords = item.ambiguous_words || [];
+                        const wordBadges = ambigWords.map(w =>
+                            `<span class="word-badge-small">${w.word} <span class="word-pos-small">${w.pos}</span></span>`
+                        ).join('');
+
+                        html += `
+                        <div class="sentence-meaning-card" style="animation-delay: ${index * 0.12}s">
+                            <div class="sentence-original">
+                                <span class="sentence-label">📝 Sentence ${index + 1}:</span>
+                                <span class="sentence-text">"${item.sentence}"</span>
+                            </div>
+                            ${ambigWords.length > 0 ? `
+                            <div class="ambig-words-row">
+                                <span class="ambig-label">Ambiguous words:</span>
+                                <div class="ambig-badges">${wordBadges}</div>
+                            </div>` : ''}
+                            <div class="sentence-meaning">
+                                <span class="meaning-label">💡 Meaning:</span>
+                                <span class="meaning-text">${item.meaning}</span>
+                            </div>
+                        </div>`;
+                    });
+
+                    html += '</div>';
+                } else {
+                    html += `<div class="result-card">
+                        <h3>No Ambiguity Detected</h3>
+                        <p>${data.meaning}</p>
+                        <div class="explanation"><strong>Note:</strong> ${data.explanation}</div>
+                    </div>`;
+                }
+
+                // Feedback section
+                html += `
+                <div class="result-card feedback-card">
+                    <div class="feedback-section">
+                        <p class="feedback-prompt">Was this analysis correct?</p>
+                        <div class="feedback-buttons">
+                            <button class="feedback-btn correct-btn" id="thumbsUp" onclick="submitFeedback(true)">
+                                👍 Yes, Correct
+                            </button>
+                            <button class="feedback-btn wrong-btn" id="thumbsDown" onclick="submitFeedback(false)">
+                                👎 No, Wrong
+                            </button>
+                        </div>
+                        <p class="feedback-thanks" id="feedbackThanks" style="display:none;">Thanks for your feedback!</p>
+                    </div>
+                </div>`;
+
+                output.innerHTML = html;
+                output.style.display = 'block';
+            } catch (error) {
+                console.error("Analysis failed:", error);
+                output.innerHTML = `<p style="color: #ef4444;">An error occurred during analysis.</p>`;
+                output.style.display = 'block';
+            } finally {
+                loader.style.display = 'none';
+                analyzeBtn.disabled = false;
+                analyzeBtn.innerText = 'Deep Analyze';
+            }
+        }
+
+        async function submitFeedback(isCorrect) {
+            document.getElementById("thumbsUp").disabled = true;
+            document.getElementById("thumbsDown").disabled = true;
+
+            const clickedBtn = isCorrect
+                ? document.getElementById("thumbsUp")
+                : document.getElementById("thumbsDown");
+            clickedBtn.classList.add("selected");
+
+            try {
+                const response = await fetch("/feedback", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ correct: isCorrect })
+                });
+                const data = await response.json();
+                updateAccuracyUI(data.accuracy, data.correct, data.total);
+
+                document.getElementById("feedbackThanks").style.display = "block";
+            } catch (e) {
+                console.error("Feedback failed:", e);
+            }
+        }
+
+        async function resetAccuracy() {
+            try {
+                const response = await fetch("/reset-accuracy", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" }
+                });
+                const data = await response.json();
+                updateAccuracyUI(0, 0, 0);
+            } catch (e) {
+                console.error("Reset failed:", e);
+            }
+        }
+
+        function updateAccuracyUI(accuracy, correct, total) {
+            const percent = total > 0 ? accuracy : null;
+            document.getElementById("accuracyPercent").innerText = percent !== null ? `${percent}%` : "— %";
+            document.getElementById("accuracyBarFill").style.width = percent !== null ? `${percent}%` : "0%";
+
+            const bar = document.getElementById("accuracyBarFill");
+            if (percent === null || percent < 40) {
+                bar.style.background = "linear-gradient(90deg, #ef4444, #f97316)";
+            } else if (percent < 70) {
+                bar.style.background = "linear-gradient(90deg, #f97316, #eab308)";
+            } else {
+                bar.style.background = "linear-gradient(90deg, #22c55e, #10b981)";
+            }
+
+            document.getElementById("correctCount").innerText = `✅ ${correct} Correct`;
+            document.getElementById("totalCount").innerText = `🔢 ${total} Total`;
+        }
+
+        // Allow Ctrl+Enter to submit
+        document.getElementById('text').addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'Enter') {
+                analyze();
+            }
+        });
+    </script>
+</body>
+
+</html>
